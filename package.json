@@ -2,12 +2,20 @@
   "name": "astaroths-bones",
   "private": true,
   "version": "0.1.0",
+  "description": "3D TRPG ダイスロール SPA (React + Three.js + Tone.js)",
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yamadar/trpg-dice-app.git"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -17,6 +25,8 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^6.0.7"
+    "prettier": "^3.4.2",
+    "vite": "^6.0.7",
+    "vitest": "^3.0.0"
   }
 }
