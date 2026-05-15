@@ -1,48 +1,14 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import * as Tone from 'tone';
-
-// =========================================================
-// 定義データ
-// =========================================================
-
-const DICE_TYPES = [
-  { id: 'd4',   faces: 4,   label: 'D4'   },
-  { id: 'd6',   faces: 6,   label: 'D6'   },
-  { id: 'd8',   faces: 8,   label: 'D8'   },
-  { id: 'd10',  faces: 10,  label: 'D10'  },
-  { id: 'd100', faces: 100, label: 'D%'   },
-  { id: 'd12',  faces: 12,  label: 'D12'  },
-  { id: 'd20',  faces: 20,  label: 'D20'  },
-];
-
-const BOARD_THEMES = {
-  oak:       { name: 'オーク卓', felt: '#2a1a0e', edge: '#6b4a2a', glow: '#8b6f47', vignette: '#000000', sound: 'wood_table' },
-  marble:    { name: '大理石',   felt: '#d8d0c4', edge: '#7a7570', glow: '#aaa298', vignette: '#3a3530', sound: 'stone' },
-  void:      { name: '虚空',     felt: '#0a0518', edge: '#2a1a4a', glow: '#5a3aaa', vignette: '#000000', sound: 'soft' },
-  cavern:    { name: '洞窟',     felt: '#1a1410', edge: '#3a2a1a', glow: '#6a4a2a', vignette: '#000000', sound: 'stone' },
-  parchment: { name: '古地図',   felt: '#b39871', edge: '#6e4a1a', glow: '#8a6730', vignette: '#3a2a10', sound: 'felt' },
-  battle:    { name: '戦場',     felt: '#28321e', edge: '#5a5030', glow: '#8a7340', vignette: '#0a0a05', sound: 'felt' },
-};
-
-const MATERIALS = {
-  acrylic:  { name: 'フロスト', metalness: 0.0,  roughness: 0.95, opacity: 0.55, transparent: true,  sound: 'plastic' },
-  resin:    { name: 'レジン',   metalness: 0.05, roughness: 0.08, opacity: 0.55, transparent: true,  sound: 'resin'   },
-  metal:    { name: 'メタル',   metalness: 0.98, roughness: 0.22, opacity: 1.0,  transparent: false, sound: 'metal'   },
-  gemstone: { name: '宝石',     metalness: 0.55, roughness: 0.02, opacity: 0.78, transparent: true,  sound: 'crystal' },
-  wood:     { name: '木材',     metalness: 0.0,  roughness: 0.82, opacity: 1.0,  transparent: false, sound: 'wood'    },
-};
-
-const COLOR_THEMES = {
-  dragonEye: { name: 'ドラゴンアイ', primary: '#2a7a3a', secondary: '#f4c425', emissive: '#1a4015', ink: '#fff0a0' },
-  nebula:    { name: 'ネビュラ',     primary: '#5a2a8c', secondary: '#a070ff', emissive: '#2a1a5a', ink: '#f0d8ff' },
-  ocean:     { name: '深海',         primary: '#1a5a9c', secondary: '#5ab0d4', emissive: '#0a3a6a', ink: '#d8f0ff' },
-  forest:    { name: '深森',         primary: '#3a6a1a', secondary: '#8cba4a', emissive: '#1a3a08', ink: '#eaf6c8' },
-  flame:     { name: '紅蓮',         primary: '#a02a0a', secondary: '#f48a27', emissive: '#5a1a02', ink: '#ffe8c8' },
-  sacred:    { name: '神聖',         primary: '#f0e8d0', secondary: '#e4c027', emissive: '#5a4520', ink: '#3a2a10' },
-  shadow:    { name: '影',           primary: '#3a1a3a', secondary: '#8a5aaa', emissive: '#1a0a1a', ink: '#dabbe8' },
-  venom:     { name: '毒',           primary: '#5a7a1a', secondary: '#d4f427', emissive: '#2a3a02', ink: '#202010' },
-};
+import {
+  DICE_TYPES, BOARD_THEMES, MATERIALS, COLOR_THEMES, SOUND_PRESETS,
+} from './data/diceConfig.js';
+import {
+  getDiceRadius, getNumberSize, getFaceLabel, faceIndexToValue,
+  decideNumberStyle, buildFormula, totalDiceCount,
+  evaluateRolls, hasCritical, hasFumble,
+} from './logic/diceLogic.js';
 
 // =========================================================
 // ジオメトリ
@@ -103,32 +69,7 @@ function getDiceGeometry(id) {
   }
 }
 
-// 衝突 & 床着地時の中心Y = 外接球半径（頂点めり込み防止）
-function getDiceRadius(id) {
-  switch (id) {
-    case 'd4':   return 1.1;
-    case 'd6':   return 1.1;
-    case 'd8':   return 1.1;
-    case 'd10':  return 1.05;
-    case 'd100': return 1.05;
-    case 'd12':  return 1.05;
-    case 'd20':  return 1.05;
-    default:     return 1.0;
-  }
-}
-
-function getNumberSize(id) {
-  switch (id) {
-    case 'd4':   return 0.5;
-    case 'd6':   return 0.85;
-    case 'd8':   return 0.6;
-    case 'd10':  return 0.55;
-    case 'd100': return 0.5;
-    case 'd12':  return 0.55;
-    case 'd20':  return 0.5;
-    default:     return 0.5;
-  }
-}
+// getDiceRadius / getNumberSize は ./logic/diceLogic.js に移動
 
 // 各面の中心と法線（同方向の三角形をグループ化）
 function computeFaceData(geometry, expectedFaceCount = null) {
@@ -246,73 +187,7 @@ function createNumberTexture(text, inkColor, options = {}) {
   return tex;
 }
 
-// 色の明度を計算（0=黒, 1=白）
-function _colorLuminance(hex) {
-  const c = new THREE.Color(hex);
-  // 知覚的明度（ITU-R BT.601）
-  return c.r * 0.299 + c.g * 0.587 + c.b * 0.114;
-}
-
-// 数字のスタイル（インク・太字・縁取り）をマテリアル×色テーマで決定
-// 戻り値: { ink, bolder, outlineColor, outlineWidth }
-function decideNumberStyle(material, colorTheme, mainColorObj) {
-  const inkHex = colorTheme.ink;
-  const inkLum = _colorLuminance(inkHex);
-  const bgLum = mainColorObj.r * 0.299 + mainColorObj.g * 0.587 + mainColorObj.b * 0.114;
-  // インクと背景の明度差（コントラスト）
-  const contrast = Math.abs(inkLum - bgLum);
-
-  let bolder = false;
-  let outlineColor = null;
-  let outlineWidth = 0;
-
-  // 素材ごとの基本設定
-  if (material === 'acrylic') {
-    // フロスト：半透明で背景が混じる → 常に bolder
-    bolder = true;
-  } else if (material === 'wood') {
-    // 木材：背景に木目模様があり数字が同化しやすい → 縁取り必須
-    bolder = true;
-    // インクが明るければ濃い茶の縁、暗ければ明るい縁
-    outlineColor = inkLum > 0.5 ? 'rgba(20, 12, 5, 0.85)' : 'rgba(240, 220, 180, 0.85)';
-    outlineWidth = 4;
-  } else if (material === 'metal') {
-    // メタル：環境反射で数字が薄れる → bolder
-    bolder = true;
-  } else if (material === 'gemstone') {
-    // 宝石：強い発光で数字が飛びやすい → 縁取りで保護
-    bolder = true;
-    outlineColor = 'rgba(0, 0, 0, 0.5)';
-    outlineWidth = 3;
-  } else if (material === 'resin') {
-    // レジン：内包物が背後にあり数字が同化しやすい → 縁取り
-    bolder = true;
-    outlineColor = inkLum > 0.5 ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.5)';
-    outlineWidth = 3;
-  }
-
-  // コントラスト不足の場合は縁取り追加 / 強化
-  if (contrast < 0.30) {
-    // インクが明るければ暗い縁、暗ければ明るい縁
-    const outlineLum = inkLum > 0.5 ? 0 : 1;
-    const oc = `rgba(${outlineLum * 255}, ${outlineLum * 255}, ${outlineLum * 255}, 0.85)`;
-    if (!outlineColor) {
-      outlineColor = oc;
-      outlineWidth = 5;
-    } else {
-      // 既に縁取りあり → さらに太く
-      outlineWidth = Math.max(outlineWidth, 5);
-    }
-  }
-
-  return { ink: inkHex, bolder, outlineColor, outlineWidth };
-}
-
-function getFaceLabel(typeId, faceIndex) {
-  if (typeId === 'd100') return (faceIndex * 10).toString().padStart(2, '0');
-  if (typeId === 'd10')  return faceIndex.toString();
-  return (faceIndex + 1).toString();
-}
+// _colorLuminance / decideNumberStyle / getFaceLabel は ./logic/diceLogic.js に移動
 
 // 上面（最も +Y を向いている面）の index を取得
 function findTopFaceIndex(mesh, faces) {
@@ -328,12 +203,7 @@ function findTopFaceIndex(mesh, faces) {
   return bestIdx;
 }
 
-// 面 index からダイスの値へ
-function faceIndexToValue(typeId, faceIndex) {
-  if (typeId === 'd10') return faceIndex === 0 ? 10 : faceIndex; // 「0」は10として読む慣習
-  if (typeId === 'd100') return faceIndex * 10;
-  return faceIndex + 1;
-}
+// faceIndexToValue は ./logic/diceLogic.js に移動
 
 // 重複を排除したローカル頂点配列（物理計算用）
 function extractUniqueVertices(geometry) {
@@ -1166,110 +1036,6 @@ function createBoardTexture(themeKey) {
 // 各素材の共鳴周波数・減衰時間を実物理から取った値で再現
 // =========================================================
 
-// 素材ごとのモーダルプリセット
-// 各 mode = { freq: 共鳴周波数Hz, decay: 減衰時間秒, amp: 振幅 }
-// noise = 打撃時の瞬間ノイズ成分
-const SOUND_PRESETS = {
-  // === ダイス素材 ===
-  wood: {
-    modes: [
-      { freq: 180,  decay: 0.14,  amp: 0.55 },
-      { freq: 420,  decay: 0.09,  amp: 0.32 },
-      { freq: 880,  decay: 0.04,  amp: 0.15 },
-      { freq: 1450, decay: 0.025, amp: 0.08 },
-    ],
-    noise: { decay: 0.014, amp: 0.28, filterFreq: 700, filterQ: 1.0, type: 'brown' },
-    gain: 0.9,
-  },
-  plastic: {
-    modes: [
-      { freq: 1400, decay: 0.045, amp: 0.45 },
-      { freq: 2800, decay: 0.028, amp: 0.28 },
-      { freq: 4200, decay: 0.018, amp: 0.14 },
-      { freq: 6200, decay: 0.010, amp: 0.07 },
-    ],
-    noise: { decay: 0.008, amp: 0.20, filterFreq: 3500, filterQ: 0.7, type: 'white' },
-    gain: 0.85,
-  },
-  resin: {
-    modes: [
-      { freq: 900,  decay: 0.075, amp: 0.45 },
-      { freq: 2100, decay: 0.050, amp: 0.28 },
-      { freq: 3800, decay: 0.025, amp: 0.14 },
-      { freq: 5400, decay: 0.015, amp: 0.07 },
-    ],
-    noise: { decay: 0.012, amp: 0.20, filterFreq: 2500, filterQ: 0.7, type: 'white' },
-    gain: 0.88,
-  },
-  metal: {
-    // 非整数倍音（ベル状）, Helmholtz比に近い
-    // 基音を低めにして「重みのある金属」の音色に
-    modes: [
-      { freq: 620,  decay: 0.7,  amp: 0.34 },
-      { freq: 1710, decay: 0.55, amp: 0.26 },
-      { freq: 3350, decay: 0.40, amp: 0.18 },
-      { freq: 5530, decay: 0.30, amp: 0.12 },
-      { freq: 8270, decay: 0.22, amp: 0.07 },
-    ],
-    noise: { decay: 0.005, amp: 0.18, filterFreq: 5000, filterQ: 0.6, type: 'white' },
-    gain: 0.78,
-  },
-  crystal: {
-    // 宝石: 基音を低めに、深みと澄んだ余韻のバランス
-    modes: [
-      { freq: 1450, decay: 0.45, amp: 0.40 },
-      { freq: 3150, decay: 0.32, amp: 0.28 },
-      { freq: 4700, decay: 0.22, amp: 0.18 },
-      { freq: 6600, decay: 0.14, amp: 0.10 },
-      { freq: 8700, decay: 0.10, amp: 0.06 },
-    ],
-    noise: { decay: 0.004, amp: 0.15, filterFreq: 7000, filterQ: 0.55, type: 'white' },
-    gain: 0.75,
-  },
-
-  // === ボード床素材 ===
-  wood_table: {
-    // 厚いオーク卓: 重く低い、減衰やや長め
-    modes: [
-      { freq: 95,  decay: 0.22, amp: 0.55 },
-      { freq: 220, decay: 0.14, amp: 0.32 },
-      { freq: 480, decay: 0.07, amp: 0.16 },
-      { freq: 880, decay: 0.04, amp: 0.08 },
-    ],
-    noise: { decay: 0.020, amp: 0.32, filterFreq: 500, filterQ: 1.2, type: 'brown' },
-    gain: 1.0,
-  },
-  stone: {
-    // 大理石・石: 硬く、短く、わずかに鋭い反響
-    modes: [
-      { freq: 320,  decay: 0.08, amp: 0.48 },
-      { freq: 880,  decay: 0.05, amp: 0.32 },
-      { freq: 2200, decay: 0.03, amp: 0.20 },
-      { freq: 4400, decay: 0.018, amp: 0.10 },
-    ],
-    noise: { decay: 0.006, amp: 0.22, filterFreq: 2800, filterQ: 0.6, type: 'white' },
-    gain: 0.85,
-  },
-  felt: {
-    // フェルト・布: 柔らかく、低周波寄り、明確な共鳴なし
-    modes: [
-      { freq: 70,  decay: 0.07, amp: 0.40 },
-      { freq: 150, decay: 0.05, amp: 0.22 },
-    ],
-    noise: { decay: 0.028, amp: 0.42, filterFreq: 280, filterQ: 0.9, type: 'brown' },
-    gain: 0.75,
-  },
-  soft: {
-    // 虚空: 柔らかく、サブベース寄り、空間的
-    modes: [
-      { freq: 110, decay: 0.12, amp: 0.38 },
-      { freq: 240, decay: 0.07, amp: 0.22 },
-    ],
-    noise: { decay: 0.035, amp: 0.32, filterFreq: 420, filterQ: 0.7, type: 'brown' },
-    gain: 0.70,
-  },
-};
-
 class DiceSound {
   constructor() {
     this.ready = false;
@@ -1517,16 +1283,9 @@ export default function TRPGDiceRoller() {
   const mat = MATERIALS[material];
   const col = COLOR_THEMES[colorTheme];
 
-  const formula = (() => {
-    const parts = [];
-    DICE_TYPES.forEach(d => { if (diceCounts[d.id] > 0) parts.push(`${diceCounts[d.id]}${d.label.toLowerCase()}`); });
-    let f = parts.join(' + ') || '—';
-    if (modifier > 0) f += ` +${modifier}`;
-    else if (modifier < 0) f += ` ${modifier}`;
-    return f;
-  })();
+  const formula = buildFormula(diceCounts, modifier);
 
-  const totalDice = Object.values(diceCounts).reduce((a, b) => a + b, 0);
+  const totalDice = totalDiceCount(diceCounts);
 
   // === Three.js セットアップ ===
   useEffect(() => {
@@ -2341,12 +2100,11 @@ export default function TRPGDiceRoller() {
         const value = faceIndexToValue(d.type.id, topIdx);
         rolls.push({ type: d.type.id, value, label: d.type.label });
       });
-      const total = rolls.reduce((s, r) => s + r.value, 0) + currentModifier;
+      const total = evaluateRolls(rolls, currentModifier);
 
       setResults({ rolls, total, modifier: currentModifier });
       setHistory(h => [{ formula: currentFormula, total, rolls, ts: Date.now() }, ...h].slice(0, 50));
-      const hasCrit = rolls.some(r => r.type === 'd20' && r.value === 20);
-      if (soundOn && hasCrit) soundRef.current.fanfare();
+      if (soundOn && hasCritical(rolls)) soundRef.current.fanfare();
       setIsRolling(false);
     };
   }, [diceCounts, modifier, isRolling, totalDice, soundOn, formula]);
@@ -2951,8 +2709,8 @@ export default function TRPGDiceRoller() {
 // =========================================================
 function ResultDisplay({ results, formula, isMobile }) {
   const { rolls, total, modifier } = results;
-  const hasCrit = rolls.some(r => r.type === 'd20' && r.value === 20);
-  const hasFumble = rolls.some(r => r.type === 'd20' && r.value === 1);
+  const hasCrit = hasCritical(rolls);
+  const fumble = hasFumble(rolls);
 
   return (
     <div>
@@ -2969,7 +2727,7 @@ function ResultDisplay({ results, formula, isMobile }) {
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           }}>{formula}</div>
         </div>
-        <div className={`grimoire-h result-glow ${hasCrit ? 'critical' : ''} ${hasFumble ? 'fumble' : ''}`} style={{
+        <div className={`grimoire-h result-glow ${hasCrit ? 'critical' : ''} ${fumble ? 'fumble' : ''}`} style={{
           fontSize: isMobile ? 32 : 42, fontWeight: 700, color: '#f4d976', lineHeight: 1,
           flexShrink: 0,
         }}>
@@ -3007,7 +2765,7 @@ function ResultDisplay({ results, formula, isMobile }) {
           ⚔ CRITICAL SUCCESS ⚔
         </div>
       )}
-      {hasFumble && (
+      {fumble && (
         <div className="grimoire-h fumble" style={{ marginTop: 4, fontSize: isMobile ? 10 : 11, letterSpacing: '0.25em' }}>
           ✗ CRITICAL FAILURE ✗
         </div>
