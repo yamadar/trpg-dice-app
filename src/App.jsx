@@ -2140,9 +2140,9 @@ export default function TRPGDiceRoller() {
   };
 
   return (
-    <div style={{
+    <div className="app-root" style={{
       fontFamily: "'Cormorant Garamond', 'Hiragino Mincho ProN', 'Yu Mincho', serif",
-      width: '100%', height: '100vh',
+      width: '100%',
       background: `radial-gradient(ellipse at 50% 30%, #1a1410 0%, #0a0608 100%)`,
       color: '#e8dcc0',
       overflow: 'hidden',
@@ -2152,6 +2152,11 @@ export default function TRPGDiceRoller() {
         @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=Noto+Serif+JP:wght@400;700&display=swap');
         .grimoire-h { font-family: 'Cinzel', 'Noto Serif JP', serif; letter-spacing: 0.18em; text-transform: uppercase; }
         .jp { font-family: 'Noto Serif JP', serif; }
+        .app-root {
+          /* Android Chrome 等で URL バー分の高さを除いた実表示領域に収める */
+          height: 100vh;
+          height: 100dvh;
+        }
         .panel {
           background: linear-gradient(145deg, rgba(28,22,18,0.92), rgba(18,14,12,0.95));
           border: 1px solid rgba(180,140,80,0.25);
@@ -2346,7 +2351,7 @@ export default function TRPGDiceRoller() {
           ...(isMobile ? {
             position: 'fixed',
             bottom: 0, left: 0, right: 0,
-            maxHeight: '72vh',
+            maxHeight: '72dvh',
             zIndex: 100,
             transform: leftOpen ? 'translateY(0)' : 'translateY(110%)',
             transition: 'transform 0.32s cubic-bezier(.2,.9,.3,1.05)',
@@ -2540,7 +2545,7 @@ export default function TRPGDiceRoller() {
           ...(isMobile ? {
             position: 'fixed',
             bottom: 0, left: 0, right: 0,
-            maxHeight: '72vh',
+            maxHeight: '72dvh',
             zIndex: 100,
             transform: rightOpen ? 'translateY(0)' : 'translateY(110%)',
             transition: 'transform 0.32s cubic-bezier(.2,.9,.3,1.05)',
