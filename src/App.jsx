@@ -10,6 +10,10 @@ import {
   evaluateRolls, hasCritical, hasFumble,
 } from './logic/diceLogic.js';
 
+// 盤面の物理パラメータ（クリック判定と物理シミュレーションで共有）
+const BOARD_RADIUS = 5.5; // ダイスが収まる円形プレイ領域の半径
+const FLOOR_Y = -0.5;     // 論理床（felt 上面と一致）
+
 // =========================================================
 // ジオメトリ
 // =========================================================
@@ -1274,6 +1278,7 @@ export default function TRPGDiceRoller() {
   const wasRollingRef = useRef(false);
   const onRollCompleteRef = useRef(null);
   const rollStartTimeRef = useRef(0);
+  const dropPointRef = useRef(null); // 盤面タップで指定された落下位置 {x,z}（1回限り）
   // 物理ループから読む（state変更でも最新値を参照）
   const soundOnRef = useRef(true);
   const materialSoundRef = useRef('resin');
@@ -1401,8 +1406,6 @@ export default function TRPGDiceRoller() {
 
     // === アニメーションループ ===
     const clock = new THREE.Clock();
-    const BOARD_RADIUS = 5.5;
-    const FLOOR_Y = -0.5;       // 論理床（feltの上面と一致）
     const GRAVITY = 26;
     const UP = new THREE.Vector3(0, 1, 0);
 
@@ -1531,13 +1534,14 @@ export default function TRPGDiceRoller() {
           }
         }
 
-        // ボード境界（円形フェルト）
+        // ボード境界（円形フェルト）— ダイス半径ぶん内側で止め、はみ出しを防ぐ
         const distXZ = Math.sqrt(d.mesh.position.x ** 2 + d.mesh.position.z ** 2);
-        if (distXZ > BOARD_RADIUS) {
+        const edgeLimit = BOARD_RADIUS - d.radius;
+        if (distXZ > edgeLimit) {
           const nx = d.mesh.position.x / distXZ;
           const nz = d.mesh.position.z / distXZ;
-          d.mesh.position.x = nx * BOARD_RADIUS;
-          d.mesh.position.z = nz * BOARD_RADIUS;
+          d.mesh.position.x = nx * edgeLimit;
+          d.mesh.position.z = nz * edgeLimit;
           const vn2 = d.physics.velocity.x * nx + d.physics.velocity.z * nz;
           if (vn2 > 0) {
             d.physics.velocity.x -= 2 * vn2 * nx * 0.6;
@@ -1652,6 +1656,19 @@ export default function TRPGDiceRoller() {
           }
         }
       }
+
+      // === フェーズ2.5: 全ダイスを盤面内へ強制 ===
+      // 停止後でも衝突の押し出しで縁を越えないようクランプ
+      //（タップ位置・ダイス個数によらず盤面外への飛び出しを保証）
+      diceMeshesRef.current.forEach(d => {
+        const dXZ = Math.sqrt(d.mesh.position.x ** 2 + d.mesh.position.z ** 2);
+        const lim = BOARD_RADIUS - d.radius;
+        if (dXZ > lim && dXZ > 0.0001) {
+          const k = lim / dXZ;
+          d.mesh.position.x *= k;
+          d.mesh.position.z *= k;
+        }
+      });
 
       // === フェーズ3: 全ダイス停止検知 → 結果コールバック ===
       if (wasRollingRef.current) {
@@ -2061,13 +2078,58 @@ export default function TRPGDiceRoller() {
     const diceList = diceMeshesRef.current.slice();
     const diceCount = diceList.length;
 
+    // 盤面タップ位置（あれば）を落下中心に。なければ盤面中央。1回限りで消費。
+    const drop = dropPointRef.current;
+    dropPointRef.current = null;
+    let dropX = 0, dropZ = 0;
+    if (drop) {
+      // 落下中心を内側へクランプ：端をタップしてもダイス群が盤面に収まる
+      const cd = Math.sqrt(drop.x ** 2 + drop.z ** 2);
+      const centerLimit = BOARD_RADIUS - 1.4;
+      if (cd > centerLimit && cd > 0.0001) {
+        dropX = (drop.x / cd) * centerLimit;
+        dropZ = (drop.z / cd) * centerLimit;
+      } else {
+        dropX = drop.x;
+        dropZ = drop.z;
+      }
+    }
+
     // 物理発射のみ（結果は決めない）
     diceList.forEach((d, i) => {
       d.physics.rolling = true;
       const angle = (i / Math.max(diceCount, 1)) * Math.PI * 2 + Math.random() * 0.6;
-      const launchR = 1.2 + Math.random() * 1.0;
-      d.mesh.position.x = Math.cos(angle) * launchR;
-      d.mesh.position.z = Math.sin(angle) * launchR;
+
+      let px, pz, vx, vy, vz;
+      if (drop) {
+        // タップ位置を中心に小さくばらけて「その場に落とす」
+        const spreadR = diceCount === 1 ? 0 : 0.55 + (i % 3) * 0.5 + Math.random() * 0.3;
+        px = dropX + Math.cos(angle) * spreadR;
+        pz = dropZ + Math.sin(angle) * spreadR;
+        // 水平速度は小さく抑え、タップ位置から大きく散らさない
+        vx = (Math.random() - 0.5) * 1.6;
+        vy = 0.5 + Math.random() * 0.8;
+        vz = (Math.random() - 0.5) * 1.6;
+      } else {
+        // 中央からのロール（従来挙動）
+        const launchR = 1.2 + Math.random() * 1.0;
+        px = Math.cos(angle) * launchR;
+        pz = Math.sin(angle) * launchR;
+        vx = Math.cos(angle) * (1.5 + Math.random() * 2.5) + (Math.random() - 0.5) * 2;
+        vy = 1 + Math.random() * 1.5;
+        vz = Math.sin(angle) * (1.5 + Math.random() * 2.5) + (Math.random() - 0.5) * 2;
+      }
+
+      // 生成位置を盤面内へクランプ（個数・位置によらず縁からはみ出さない）
+      const limitR = BOARD_RADIUS - d.radius - 0.1;
+      const pd = Math.sqrt(px ** 2 + pz ** 2);
+      if (pd > limitR && pd > 0.0001) {
+        px = (px / pd) * limitR;
+        pz = (pz / pd) * limitR;
+      }
+
+      d.mesh.position.x = px;
+      d.mesh.position.z = pz;
       d.mesh.position.y = 4.5 + Math.random() * 2;
       // 初期姿勢もランダム化（結果に偏りが出ないように）
       d.mesh.quaternion.setFromEuler(new THREE.Euler(
@@ -2075,11 +2137,7 @@ export default function TRPGDiceRoller() {
         Math.random() * Math.PI * 2,
         Math.random() * Math.PI * 2,
       ));
-      d.physics.velocity.set(
-        Math.cos(angle) * (1.5 + Math.random() * 2.5) + (Math.random() - 0.5) * 2,
-        1 + Math.random() * 1.5,
-        Math.sin(angle) * (1.5 + Math.random() * 2.5) + (Math.random() - 0.5) * 2
-      );
+      d.physics.velocity.set(vx, vy, vz);
       d.physics.angVel.set(
         (Math.random() - 0.5) * 16,
         (Math.random() - 0.5) * 16,
@@ -2108,6 +2166,31 @@ export default function TRPGDiceRoller() {
       setIsRolling(false);
     };
   }, [diceCounts, modifier, isRolling, totalDice, soundOn, formula]);
+
+  // 盤面クリック/タップ：交点を計算し、その位置を落下位置に指定してロール
+  const handleBoardClick = useCallback((e) => {
+    if (isRolling || totalDice === 0) return;
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    if (renderer && camera) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera({ x: ndcX, y: ndcY }, camera);
+      // 床（felt 上面）平面との交点をタップ位置とする
+      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -FLOOR_Y);
+      const hit = new THREE.Vector3();
+      const ok = raycaster.ray.intersectPlane(plane, hit);
+      // 盤面（felt 半径 6.2）内をタップしたときのみ落下位置を採用
+      if (ok && Math.sqrt(hit.x ** 2 + hit.z ** 2) <= 6.2) {
+        dropPointRef.current = { x: hit.x, z: hit.z };
+      } else {
+        dropPointRef.current = null;
+      }
+    }
+    handleRoll();
+  }, [isRolling, totalDice, handleRoll]);
 
   const updateDice = (id, delta) => {
     setDiceCounts(c => ({ ...c, [id]: Math.max(0, Math.min(20, c[id] + delta)) }));
@@ -2445,9 +2528,7 @@ export default function TRPGDiceRoller() {
           {/* 3Dビュー（タップ/クリックでもロール実行） */}
           <div
             className="panel"
-            onClick={() => {
-              if (!isRolling && totalDice > 0) handleRoll();
-            }}
+            onClick={handleBoardClick}
             style={{
               flex: 1, position: 'relative', overflow: 'hidden', borderRadius: 4,
               minHeight: 200,
