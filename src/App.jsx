@@ -3,10 +3,11 @@ import * as THREE from 'three';
 import * as Tone from 'tone';
 import {
   DICE_TYPES, BOARD_THEMES, MATERIALS, COLOR_THEMES, SOUND_PRESETS,
+  MAX_TOTAL_DICE, MAX_DICE_PER_TYPE,
 } from './data/diceConfig.js';
 import {
   getDiceRadius, getNumberSize, getFaceLabel, faceIndexToValue,
-  decideNumberStyle, buildFormula, totalDiceCount,
+  decideNumberStyle, buildFormula, totalDiceCount, adjustDiceCount,
   evaluateRolls, hasCritical, hasFumble,
 } from './logic/diceLogic.js';
 
@@ -1284,6 +1285,7 @@ export default function TRPGDiceRoller() {
   const onRollCompleteRef = useRef(null);
   const rollStartTimeRef = useRef(0);
   const dropPointRef = useRef(null); // 盤面タップで指定された落下位置 {x,z}（1回限り）
+  const prevAppearanceRef = useRef(null); // 直前の素材・色テーマ（差分更新の判定用）
   // 物理ループから読む（state変更でも最新値を参照）
   const soundOnRef = useRef(true);
   const materialSoundRef = useRef('resin');
@@ -1408,6 +1410,7 @@ export default function TRPGDiceRoller() {
     }
 
     rebuildDice(scene);
+    prevAppearanceRef.current = { material, colorTheme };
 
     // === アニメーションループ ===
     const clock = new THREE.Clock();
@@ -1589,6 +1592,8 @@ export default function TRPGDiceRoller() {
           d.physics.rolling = false;
           d.physics.velocity.set(0, 0, 0);
           d.physics.angVel.set(0, 0, 0);
+          // 着地高さを記録（以降は他ダイスの押し出しで床下に沈まないよう下限とする）
+          d.restY = d.mesh.position.y;
         }
       });
 
@@ -1672,6 +1677,11 @@ export default function TRPGDiceRoller() {
           const k = lim / dXZ;
           d.mesh.position.x *= k;
           d.mesh.position.z *= k;
+        }
+        // 停止済みダイスはダイス同士の衝突押し出しで床にめり込まないよう
+        // 着地高さ(restY)を下限にクランプする（rolling 中はフェーズ1で床補正済み）
+        if (!d.physics.rolling && d.mesh.position.y < d.restY) {
+          d.mesh.position.y = d.restY;
         }
       });
 
@@ -1782,9 +1792,19 @@ export default function TRPGDiceRoller() {
     });
   }, [boardTheme]); // eslint-disable-line
 
-  // ダイス再構築
+  // ダイス再構築。
+  // 素材・色テーマ変更時は見た目が変わるため全再生成、
+  // 個数のみの変更時は差分追加 / 削除で済ませる（多数追加時の待ち時間を抑える）。
   useEffect(() => {
-    if (sceneRef.current) rebuildDice(sceneRef.current);
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const prev = prevAppearanceRef.current;
+    if (!prev || prev.material !== material || prev.colorTheme !== colorTheme) {
+      prevAppearanceRef.current = { material, colorTheme };
+      rebuildDice(scene);
+    } else {
+      syncDiceCount(scene);
+    }
   }, [diceCounts, material, colorTheme]); // eslint-disable-line
 
   // 音用 ref 同期（物理ループから最新値を参照可能に）
@@ -1807,78 +1827,132 @@ export default function TRPGDiceRoller() {
     cam.updateProjectionMatrix();
   }, [isMobile]);
 
-  function clearDiceMeshes(scene) {
-    diceMeshesRef.current.forEach(d => {
-      scene.remove(d.mesh);
-      d.mesh.traverse(obj => {
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) {
-          if (Array.isArray(obj.material)) obj.material.forEach(m => {
-            if (m.map) m.map.dispose();
-            m.dispose();
-          });
-          else {
-            if (obj.material.map) obj.material.map.dispose();
-            obj.material.dispose();
-          }
+  // 1 個のダイス（mesh + contact shadow）の GPU リソースを解放
+  function disposeDie(scene, d) {
+    scene.remove(d.mesh);
+    d.mesh.traverse(obj => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) {
+        if (Array.isArray(obj.material)) obj.material.forEach(m => {
+          if (m.map) m.map.dispose();
+          m.dispose();
+        });
+        else {
+          if (obj.material.map) obj.material.map.dispose();
+          obj.material.dispose();
         }
-      });
-      // Contact shadow のクリーンアップ
-      if (d.contactShadow) {
-        scene.remove(d.contactShadow);
-        d.contactShadow.geometry.dispose();
-        if (d.contactShadow.material.map) d.contactShadow.material.map.dispose();
-        d.contactShadow.material.dispose();
       }
     });
+    if (d.contactShadow) {
+      scene.remove(d.contactShadow);
+      d.contactShadow.geometry.dispose();
+      if (d.contactShadow.material.map) d.contactShadow.material.map.dispose();
+      d.contactShadow.material.dispose();
+    }
+  }
+
+  function clearDiceMeshes(scene) {
+    diceMeshesRef.current.forEach(d => disposeDie(scene, d));
     diceMeshesRef.current = [];
   }
 
+  // ダイス 1 個分のメッシュ生成（重い処理）。位置は layoutDice に委ねる。
+  function createDieEntry(scene, t) {
+    const radius = getDiceRadius(t.id);
+    const mesh = makeDieMesh(t);
+    mesh.userData.type = t;
+    scene.add(mesh);
+
+    // フロスト専用: 半透明の柔らかい contact shadow
+    let contactShadow = null;
+    if (material === 'acrylic') {
+      contactShadow = createContactShadow(radius);
+      scene.add(contactShadow);
+    }
+
+    return {
+      mesh,
+      type: t,
+      radius,
+      faces: mesh.userData.faces || [],
+      localVerts: mesh.userData.localVerts || [],
+      contactShadow,
+      restY: FLOOR_Y + radius, // 着地高さ（衝突で床下にめり込まないための下限）
+      physics: {
+        rolling: false,
+        velocity: new THREE.Vector3(),
+        angVel: new THREE.Vector3(),
+      },
+      sound: {
+        lastFloorHit: 0,
+        lastEdgeHit: 0,
+      },
+    };
+  }
+
+  // 現在のダイス群を円形プレイ領域内に整列配置する。
+  // sunflower（黄金角）配置で円盤を均等に埋め、盤面からのはみ出しを防ぐ。
+  // 各ダイスは実ジオメトリの最下点が床に接するよう Y を決め、めり込み/浮きを防ぐ。
+  function layoutDice() {
+    const dice = diceMeshesRef.current;
+    const n = dice.length;
+    if (n === 0) return;
+    const maxRadius = dice.reduce((m, d) => Math.max(m, d.radius), 0);
+    const fieldR = Math.max(0, BOARD_RADIUS - maxRadius - 0.2);
+    const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+    dice.forEach((d, i) => {
+      let x = 0, z = 0;
+      if (n > 1) {
+        const rr = Math.sqrt((i + 0.5) / n) * fieldR;
+        const ang = i * GOLDEN_ANGLE;
+        x = Math.cos(ang) * rr;
+        z = Math.sin(ang) * rr;
+      }
+      d.mesh.quaternion.identity();
+      // 静止姿勢での実ジオメトリ最下点を床に合わせる
+      let minLocalY = Infinity;
+      for (const lv of d.localVerts) {
+        if (lv.y < minLocalY) minLocalY = lv.y;
+      }
+      if (!Number.isFinite(minLocalY)) minLocalY = -d.radius;
+      const restY = FLOOR_Y - minLocalY;
+      d.mesh.position.set(x, restY, z);
+      d.restY = restY;
+      d.physics.rolling = false;
+      d.physics.velocity.set(0, 0, 0);
+      d.physics.angVel.set(0, 0, 0);
+      if (d.contactShadow) d.contactShadow.position.set(x, FLOOR_Y + 0.01, z);
+    });
+  }
+
+  // 全ダイスを破棄して作り直す（素材・色テーマ変更時）
   function rebuildDice(scene) {
     clearDiceMeshes(scene);
-    const all = [];
-    DICE_TYPES.forEach(t => { for (let i = 0; i < diceCounts[t.id]; i++) all.push(t); });
-    if (all.length === 0) all.push(DICE_TYPES.find(d => d.id === 'd20'));
-
-    const cols = Math.ceil(Math.sqrt(all.length));
-    const spacing = 2.6;
-    all.forEach((t, i) => {
-      const row = Math.floor(i / cols);
-      const col2 = i % cols;
-      const ox = (col2 - (cols - 1) / 2) * spacing;
-      const oz = (row - (Math.ceil(all.length / cols) - 1) / 2) * spacing;
-      const radius = getDiceRadius(t.id);
-      const mesh = makeDieMesh(t);
-      mesh.position.set(ox, -0.5 + radius, oz);
-      mesh.userData.type = t;
-      scene.add(mesh);
-
-      // フロスト専用: 半透明の柔らかい contact shadow を真下に配置
-      let contactShadow = null;
-      if (material === 'acrylic') {
-        contactShadow = createContactShadow(radius);
-        contactShadow.position.set(ox, -0.49, oz);
-        scene.add(contactShadow);
+    DICE_TYPES.forEach(t => {
+      for (let i = 0; i < diceCounts[t.id]; i++) {
+        diceMeshesRef.current.push(createDieEntry(scene, t));
       }
-
-      diceMeshesRef.current.push({
-        mesh,
-        type: t,
-        radius,
-        faces: mesh.userData.faces || [],
-        localVerts: mesh.userData.localVerts || [],
-        contactShadow,
-        physics: {
-          rolling: false,
-          velocity: new THREE.Vector3(),
-          angVel: new THREE.Vector3(),
-        },
-        sound: {
-          lastFloorHit: 0,
-          lastEdgeHit: 0,
-        }
-      });
     });
+    layoutDice();
+  }
+
+  // diceCounts に合わせて差分だけ追加 / 削除する（個数変更時）。
+  // 全再生成しないため、ダイスが増えても 1 個追加分の処理量で済む。
+  function syncDiceCount(scene) {
+    DICE_TYPES.forEach(t => {
+      const desired = diceCounts[t.id];
+      const current = diceMeshesRef.current.filter(d => d.type.id === t.id);
+      if (current.length > desired) {
+        const remove = new Set(current.slice(desired));
+        remove.forEach(d => disposeDie(scene, d));
+        diceMeshesRef.current = diceMeshesRef.current.filter(d => !remove.has(d));
+      } else {
+        for (let i = current.length; i < desired; i++) {
+          diceMeshesRef.current.push(createDieEntry(scene, t));
+        }
+      }
+    });
+    layoutDice();
   }
 
   function makeDieMesh(type) {
@@ -2198,7 +2272,10 @@ export default function TRPGDiceRoller() {
   }, [isRolling, totalDice, handleRoll]);
 
   const updateDice = (id, delta) => {
-    setDiceCounts(c => ({ ...c, [id]: Math.max(0, Math.min(20, c[id] + delta)) }));
+    setDiceCounts(c => adjustDiceCount(c, id, delta, {
+      maxTotal: MAX_TOTAL_DICE,
+      maxPerType: MAX_DICE_PER_TYPE,
+    }));
   };
   const clearAll = () => {
     setDiceCounts({ d4:0, d6:0, d8:0, d10:0, d100:0, d12:0, d20:0 });
@@ -2485,7 +2562,10 @@ export default function TRPGDiceRoller() {
               <div style={{ padding: '10px 12px', overflowY: 'auto', flex: 1 }}>
                 {/* コンパクトなダイスリスト */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {DICE_TYPES.map(d => (
+                  {DICE_TYPES.map(d => {
+                    const addDisabled = totalDice >= MAX_TOTAL_DICE
+                      || diceCounts[d.id] >= MAX_DICE_PER_TYPE;
+                    return (
                     <div key={d.id} className={`dice-row ${diceCounts[d.id] > 0 ? 'active' : ''}`}>
                       <span className="grimoire-h" style={{
                         fontSize: 13, fontWeight: 700,
@@ -2498,10 +2578,28 @@ export default function TRPGDiceRoller() {
                         minWidth: 18, textAlign: 'center', fontSize: 13,
                         color: '#f4d976', fontFamily: 'Cinzel, serif',
                       }}>{diceCounts[d.id]}</span>
-                      <button className="pillbtn" onClick={() => updateDice(d.id, 1)}>+</button>
+                      <button
+                        className="pillbtn"
+                        onClick={() => updateDice(d.id, 1)}
+                        disabled={addDisabled}
+                        style={{
+                          opacity: addDisabled ? 0.3 : 1,
+                          cursor: addDisabled ? 'not-allowed' : 'pointer',
+                        }}
+                      >+</button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
+
+                {totalDice >= MAX_TOTAL_DICE && (
+                  <div className="jp" style={{
+                    fontSize: 9, color: '#d4a017', opacity: 0.8,
+                    textAlign: 'center', marginTop: 6, letterSpacing: '0.1em',
+                  }}>
+                    盤面の上限（{MAX_TOTAL_DICE}個）に達しました
+                  </div>
+                )}
 
                 <div className="ornate-divider" />
 

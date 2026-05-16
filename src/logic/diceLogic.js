@@ -140,6 +140,21 @@ export function totalDiceCount(diceCounts) {
   return Object.values(diceCounts).reduce((a, b) => a + b, 0);
 }
 
+// ダイス種別 id を delta だけ増減した新しい diceCounts を返す（純粋）。
+// 1 種別あたり maxPerType、全体で maxTotal を超えない範囲にクランプする。
+// 上限に達している場合は増加分が無視される（盤面の破綻防止）。
+export function adjustDiceCount(
+  diceCounts, id, delta,
+  { maxTotal = Infinity, maxPerType = Infinity } = {},
+) {
+  const current = diceCounts[id] || 0;
+  const othersTotal = totalDiceCount(diceCounts) - current;
+  let next = current + delta;
+  next = Math.max(0, Math.min(next, maxPerType));
+  next = Math.min(next, Math.max(0, maxTotal - othersTotal));
+  return { ...diceCounts, [id]: next };
+}
+
 // rolls 配列（[{ type, value, label }]）と modifier から合計を出す
 export function evaluateRolls(rolls, modifier = 0) {
   return rolls.reduce((s, r) => s + r.value, 0) + modifier;
