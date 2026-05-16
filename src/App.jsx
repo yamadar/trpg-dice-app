@@ -1661,6 +1661,12 @@ export default function TRPGDiceRoller() {
                   }
                 }
               }
+              // 接地済み(rolling=false)のダイスがぶつかられて押し出された場合は
+              // 物理を再開させる。rolling=false のままだと衝突解決(L1605)の対象外になり、
+              // 隣の接地済みダイスへめり込んだまま固定されてしまうため。
+              // 衝突インパルスで付与された速度もこれで初めて積分される。
+              a.physics.rolling = true;
+              b.physics.rolling = true;
             }
           }
         }
