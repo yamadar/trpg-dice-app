@@ -13,6 +13,12 @@ export const DICE_TYPES = [
   { id: 'd20',  faces: 20,  label: 'D20'  },
 ];
 
+// 円形プレイ領域に過密なく配置できるダイスの総数上限。
+// これを超えると盤面からはみ出す / めり込むため UI 側で増加を止める。
+export const MAX_TOTAL_DICE = 20;
+// 1 種別あたりの上限。
+export const MAX_DICE_PER_TYPE = 20;
+
 export const BOARD_THEMES = {
   oak:       { name: 'オーク卓', felt: '#2a1a0e', edge: '#6b4a2a', glow: '#8b6f47', vignette: '#000000', sound: 'wood_table' },
   marble:    { name: '大理石',   felt: '#d8d0c4', edge: '#7a7570', glow: '#aaa298', vignette: '#3a3530', sound: 'stone' },

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   getDiceRadius, getNumberSize, getFaceLabel, faceIndexToValue,
   colorLuminance, hexToLinearRgb, decideNumberStyle,
-  buildFormula, totalDiceCount, evaluateRolls,
+  buildFormula, totalDiceCount, adjustDiceCount, evaluateRolls,
   hasCritical, hasFumble, rollDie, rollDieByType,
 } from './diceLogic.js';
 import { DICE_TYPES, COLOR_THEMES } from '../data/diceConfig.js';
@@ -177,6 +177,44 @@ describe('totalDiceCount', () => {
   });
   it('is 0 for an all-zero selection', () => {
     expect(totalDiceCount({ d4: 0, d6: 0 })).toBe(0);
+  });
+});
+
+describe('adjustDiceCount', () => {
+  const base = { d4: 0, d6: 0, d8: 0, d10: 0, d100: 0, d12: 0, d20: 0 };
+
+  it('increments and decrements the chosen die type', () => {
+    expect(adjustDiceCount(base, 'd6', 1)).toMatchObject({ d6: 1 });
+    expect(adjustDiceCount({ ...base, d6: 3 }, 'd6', -1)).toMatchObject({ d6: 2 });
+  });
+  it('never goes below zero', () => {
+    expect(adjustDiceCount(base, 'd6', -1)).toMatchObject({ d6: 0 });
+  });
+  it('clamps to maxPerType', () => {
+    const r = adjustDiceCount({ ...base, d6: 5 }, 'd6', 1, { maxPerType: 5 });
+    expect(r.d6).toBe(5);
+  });
+  it('blocks an increase that would exceed maxTotal', () => {
+    const counts = { ...base, d4: 6, d20: 4 }; // total 10
+    const r = adjustDiceCount(counts, 'd6', 1, { maxTotal: 10 });
+    expect(r.d6).toBe(0);
+    expect(totalDiceCount(r)).toBe(10);
+  });
+  it('allows an increase up to exactly maxTotal', () => {
+    const counts = { ...base, d4: 9 }; // total 9
+    const r = adjustDiceCount(counts, 'd6', 1, { maxTotal: 10 });
+    expect(r.d6).toBe(1);
+    expect(totalDiceCount(r)).toBe(10);
+  });
+  it('still permits decreases when already at the total cap', () => {
+    const counts = { ...base, d6: 10 }; // total 10, at cap
+    const r = adjustDiceCount(counts, 'd6', -1, { maxTotal: 10 });
+    expect(r.d6).toBe(9);
+  });
+  it('does not mutate the input object', () => {
+    const counts = { ...base, d6: 2 };
+    adjustDiceCount(counts, 'd6', 1);
+    expect(counts.d6).toBe(2);
   });
 });
 
