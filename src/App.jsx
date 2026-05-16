@@ -1230,12 +1230,17 @@ class DiceSound {
 // メイン
 // =========================================================
 
+const randomKey = (obj) => {
+  const keys = Object.keys(obj);
+  return keys[Math.floor(Math.random() * keys.length)];
+};
+
 export default function TRPGDiceRoller() {
   const [diceCounts, setDiceCounts] = useState({ d4:0, d6:0, d8:0, d10:0, d100:0, d12:0, d20:1 });
   const [modifier, setModifier] = useState(0);
-  const [material, setMaterial] = useState('resin');
-  const [colorTheme, setColorTheme] = useState('nebula');
-  const [boardTheme, setBoardTheme] = useState('oak');
+  const [material, setMaterial] = useState(() => randomKey(MATERIALS));
+  const [colorTheme, setColorTheme] = useState(() => randomKey(COLOR_THEMES));
+  const [boardTheme, setBoardTheme] = useState(() => randomKey(BOARD_THEMES));
   const [isRolling, setIsRolling] = useState(false);
   const [results, setResults] = useState(null);
   const [history, setHistory] = useState([]);
@@ -2318,6 +2323,23 @@ export default function TRPGDiceRoller() {
           padding: 0;
         }
         .toggle-tab:hover { background: rgba(80,55,25,0.9); color: #f4d976; }
+        .panel-open-tab {
+          background: linear-gradient(180deg, rgba(150,100,38,0.95), rgba(95,62,24,0.97));
+          border: 1px solid rgba(212,160,23,0.7);
+          color: #f7e08a;
+          font-size: 13px; font-weight: 700;
+          box-shadow: inset 0 0 22px rgba(212,160,23,0.22), 0 0 16px rgba(0,0,0,0.55);
+          animation: tabPulse 2.4s ease-in-out infinite;
+        }
+        .panel-open-tab:hover {
+          background: linear-gradient(180deg, rgba(185,128,52,1), rgba(120,80,32,1));
+          color: #fff4cb;
+          box-shadow: inset 0 0 26px rgba(244,217,118,0.3), 0 0 22px rgba(212,160,23,0.4);
+        }
+        @keyframes tabPulse {
+          0%, 100% { box-shadow: inset 0 0 22px rgba(212,160,23,0.22), 0 0 12px rgba(0,0,0,0.55); }
+          50%      { box-shadow: inset 0 0 22px rgba(212,160,23,0.22), 0 0 22px rgba(212,160,23,0.45); }
+        }
         .panel-anim { transition: width 0.24s cubic-bezier(.2,.9,.3,1.2); }
       `}</style>
 
@@ -2511,10 +2533,10 @@ export default function TRPGDiceRoller() {
               </div>
             </>
           ) : !isMobile ? (
-            <button className="toggle-tab" onClick={() => setLeftOpen(true)}
+            <button className="toggle-tab panel-open-tab" onClick={() => setLeftOpen(true)}
               style={{ width: '100%', height: '100%', borderRadius: 4, flexDirection: 'column', gap: 12 }}>
               <span style={{ writingMode: 'vertical-rl', letterSpacing: '0.3em' }}>ダイス変更</span>
-              <span style={{ fontSize: 14 }}>›</span>
+              <span style={{ fontSize: 16 }}>›</span>
             </button>
           ) : null}
         </aside>
@@ -2729,10 +2751,10 @@ export default function TRPGDiceRoller() {
               </div>
             </>
           ) : !isMobile ? (
-            <button className="toggle-tab" onClick={() => setRightOpen(true)}
+            <button className="toggle-tab panel-open-tab" onClick={() => setRightOpen(true)}
               style={{ width: '100%', height: '100%', borderRadius: 4, flexDirection: 'column', gap: 12 }}>
-              <span style={{ fontSize: 14 }}>‹</span>
-              <span style={{ writingMode: 'vertical-rl', letterSpacing: '0.3em' }}>スタイル</span>
+              <span style={{ fontSize: 16 }}>‹</span>
+              <span style={{ writingMode: 'vertical-rl', letterSpacing: '0.3em' }}>スタイル変更</span>
             </button>
           ) : null}
         </aside>
