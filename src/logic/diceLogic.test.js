@@ -5,7 +5,7 @@ import {
   buildFormula, totalDiceCount, adjustDiceCount, evaluateRolls,
   hasCritical, hasFumble, rollDie, rollDieByType,
 } from './diceLogic.js';
-import { DICE_TYPES, COLOR_THEMES } from '../data/diceConfig.js';
+import { DICE_TYPES, COLOR_THEMES, MAX_TOTAL_DICE, MAX_DICE_PER_TYPE } from '../data/diceConfig.js';
 
 // 決定的テスト用の注入可能 RNG。与えた値を順番に返す。
 function seqRng(values) {
@@ -215,6 +215,22 @@ describe('adjustDiceCount', () => {
     const counts = { ...base, d6: 2 };
     adjustDiceCount(counts, 'd6', 1);
     expect(counts.d6).toBe(2);
+  });
+  // 実アプリと同じ設定で「+ ボタン連打」を再現し、盤面の総数上限を超えないことを保証する。
+  it('caps the grand total at MAX_TOTAL_DICE under heavy + spamming on every type', () => {
+    let counts = { d4: 0, d6: 0, d8: 0, d10: 0, d100: 0, d12: 0, d20: 1 };
+    for (const t of DICE_TYPES) {
+      for (let i = 0; i < 100; i++) {
+        counts = adjustDiceCount(counts, t.id, 1, {
+          maxTotal: MAX_TOTAL_DICE,
+          maxPerType: MAX_DICE_PER_TYPE,
+        });
+      }
+    }
+    expect(totalDiceCount(counts)).toBe(MAX_TOTAL_DICE);
+    for (const t of DICE_TYPES) {
+      expect(counts[t.id]).toBeLessThanOrEqual(MAX_DICE_PER_TYPE);
+    }
   });
 });
 

@@ -1416,6 +1416,7 @@ export default function TRPGDiceRoller() {
     const clock = new THREE.Clock();
     const GRAVITY = 26;
     const UP = new THREE.Vector3(0, 1, 0);
+    const floorClampVec = new THREE.Vector3(); // 床めり込み補正用の作業ベクトル
 
     const animate = () => {
       const dt = Math.min(clock.getDelta(), 0.033);
@@ -1592,8 +1593,6 @@ export default function TRPGDiceRoller() {
           d.physics.rolling = false;
           d.physics.velocity.set(0, 0, 0);
           d.physics.angVel.set(0, 0, 0);
-          // 着地高さを記録（以降は他ダイスの押し出しで床下に沈まないよう下限とする）
-          d.restY = d.mesh.position.y;
         }
       });
 
@@ -1667,9 +1666,11 @@ export default function TRPGDiceRoller() {
         }
       }
 
-      // === フェーズ2.5: 全ダイスを盤面内へ強制 ===
-      // 停止後でも衝突の押し出しで縁を越えないようクランプ
-      //（タップ位置・ダイス個数によらず盤面外への飛び出しを保証）
+      // === フェーズ2.5: 全ダイスを盤面内へ + 床めり込み補正 ===
+      // フェーズ1の床補正は rolling 中のダイスにしか効かず、しかも
+      // フェーズ2（ダイス同士の押し出し）より前に走る。そのため
+      // 押し出しで床下へ潜ったダイスはここで実ジオメトリ基準に補正する。
+      //（停止済み・回転中を問わず、描画前の最終位置で必ず床上に乗せる）
       diceMeshesRef.current.forEach(d => {
         const dXZ = Math.sqrt(d.mesh.position.x ** 2 + d.mesh.position.z ** 2);
         const lim = BOARD_RADIUS - d.radius;
@@ -1678,10 +1679,15 @@ export default function TRPGDiceRoller() {
           d.mesh.position.x *= k;
           d.mesh.position.z *= k;
         }
-        // 停止済みダイスはダイス同士の衝突押し出しで床にめり込まないよう
-        // 着地高さ(restY)を下限にクランプする（rolling 中はフェーズ1で床補正済み）
-        if (!d.physics.rolling && d.mesh.position.y < d.restY) {
-          d.mesh.position.y = d.restY;
+        // 実ジオメトリの最下点（現在の姿勢で評価）が床より下なら押し上げる
+        let minY = Infinity;
+        for (const lv of d.localVerts) {
+          floorClampVec.copy(lv).applyQuaternion(d.mesh.quaternion);
+          const wy = floorClampVec.y + d.mesh.position.y;
+          if (wy < minY) minY = wy;
+        }
+        if (Number.isFinite(minY) && minY < FLOOR_Y) {
+          d.mesh.position.y += FLOOR_Y - minY;
         }
       });
 
@@ -1877,7 +1883,6 @@ export default function TRPGDiceRoller() {
       faces: mesh.userData.faces || [],
       localVerts: mesh.userData.localVerts || [],
       contactShadow,
-      restY: FLOOR_Y + radius, // 着地高さ（衝突で床下にめり込まないための下限）
       physics: {
         rolling: false,
         velocity: new THREE.Vector3(),
@@ -1915,9 +1920,7 @@ export default function TRPGDiceRoller() {
         if (lv.y < minLocalY) minLocalY = lv.y;
       }
       if (!Number.isFinite(minLocalY)) minLocalY = -d.radius;
-      const restY = FLOOR_Y - minLocalY;
-      d.mesh.position.set(x, restY, z);
-      d.restY = restY;
+      d.mesh.position.set(x, FLOOR_Y - minLocalY, z);
       d.physics.rolling = false;
       d.physics.velocity.set(0, 0, 0);
       d.physics.angVel.set(0, 0, 0);
@@ -2389,6 +2392,12 @@ export default function TRPGDiceRoller() {
           padding: 0; line-height: 1;
         }
         .pillbtn:hover { background: rgba(120,80,30,0.7); }
+        .pillbtn:disabled {
+          opacity: 0.3;
+          cursor: not-allowed;
+          filter: grayscale(0.6);
+        }
+        .pillbtn:disabled:hover { background: rgba(60,42,20,0.6); }
         .toggle-tab {
           background: linear-gradient(180deg, rgba(40,30,20,0.95), rgba(20,14,10,0.95));
           border: 1px solid rgba(180,140,80,0.3);
@@ -2582,24 +2591,21 @@ export default function TRPGDiceRoller() {
                         className="pillbtn"
                         onClick={() => updateDice(d.id, 1)}
                         disabled={addDisabled}
-                        style={{
-                          opacity: addDisabled ? 0.3 : 1,
-                          cursor: addDisabled ? 'not-allowed' : 'pointer',
-                        }}
+                        title={addDisabled ? `盤面の上限は ${MAX_TOTAL_DICE} 個です` : ''}
                       >+</button>
                     </div>
                     );
                   })}
                 </div>
 
-                {totalDice >= MAX_TOTAL_DICE && (
-                  <div className="jp" style={{
-                    fontSize: 9, color: '#d4a017', opacity: 0.8,
-                    textAlign: 'center', marginTop: 6, letterSpacing: '0.1em',
-                  }}>
-                    盤面の上限（{MAX_TOTAL_DICE}個）に達しました
-                  </div>
-                )}
+                <div className="jp" style={{
+                  fontSize: 10, textAlign: 'center', marginTop: 8,
+                  letterSpacing: '0.1em',
+                  color: totalDice >= MAX_TOTAL_DICE ? '#e08a3a' : '#a89570',
+                }}>
+                  ダイス合計 {totalDice} / {MAX_TOTAL_DICE}
+                  {totalDice >= MAX_TOTAL_DICE && '（上限）'}
+                </div>
 
                 <div className="ornate-divider" />
 
